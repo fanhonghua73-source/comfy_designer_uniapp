@@ -1,11 +1,18 @@
 {
 	"pages": [ //pages数组中第一项表示应用启动页，参考：https://uniapp.dcloud.io/collocation/pages
-		{
-			"path": "pages/index/index",
-			"style": {
-				"navigationBarTitleText": "e"
-			}
-		}
+		 {
+		      "path": "pages/index/index",
+		      "style": {
+		        "navigationBarTitleText": "EAGLE"
+		      }
+		    },
+		    {
+		      "path": "pages/root/root",
+		      "style": {
+		        "navigationBarTitleText": "Root 管理",
+		        "navigationBarBackButton": true   // 返回按钮
+		      }
+		    }
 	],
 	"globalStyle": {
 		"navigationBarTextStyle": "black",
