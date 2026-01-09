@@ -23,7 +23,9 @@
     <!-- 顶部标题 + 队列等待数 -->
     <view class="header">
       <text class="title">ADESIGNI - {{ userName }}</text>
-      <text v-if="waitingCount>0" class="queue-badge">队列 {{ waitingCount }}</text>
+      <text class="queue-badge" :style="{background: waitingCount > 0 ? '#ff9800' : '#4cd964'}">
+        {{ waitingCount > 0 ? '系统任务: ' + waitingCount : '系统空闲' }}
+      </text>
     </view>
 
     <!-- 工作流选择 -->
@@ -121,6 +123,12 @@ function doLogin() {
     method: 'POST',
     data: loginForm,
     success: res => {
+		if (res.statusCode !== 200) {
+	        return uni.showToast({
+	          title: res.data.detail || '登录失败',
+	          icon: 'none'
+	        });
+	      }
       token.value = res.data.token;
       userName.value = res.data.username;
       isRoot.value = res.data.isRoot;
@@ -293,25 +301,39 @@ function logout() {
 
 /* ---------- WebSocket 进度 ---------- */
 function openProgressSocket() {
-  socketTask = uni.connectSocket({ url: 'ws://192.168.44.173:8001' });
+  socketTask = uni.connectSocket({ url: 'ws://192.168.44.173:8001' }); // 请确保IP正确
+  
   socketTask.onMessage(res => {
     const msg = JSON.parse(res.data);
+
+    // 1. 监听到“开始运行节点”或“有进度” -> 强制显示忙碌
+    // 即使 polling 还没轮到，也先让界面变橙色，给用户反馈
+    if (msg.type === 'node_start' || msg.type === 'progress') {
+       if (waitingCount.value === 0) {
+         waitingCount.value = 1; // 视觉上立即变更为“系统任务: 1”
+       }
+    }
+
+    // 原有逻辑：显示进度条
     if (msg.type === 'node_start') {
-      showBar.value = true; curNode.value = msg.node; percent.value = 0;
+      showBar.value = true; 
+      curNode.value = msg.node; 
+      percent.value = 0;
     }
     if (msg.type === 'progress') {
       percent.value = Math.round((msg.value / msg.max) * 100);
     }
+
+    // 2. 监听到“任务完成” -> 立即刷新队列数
+    // 不要等那 5 秒的定时器了，现在就去问后端还有几个任务
     if (msg.type === 'finished') {
       percent.value = 100;
+      pullQueueCount(); // <--- 关键修改：任务一结束，马上拉取最新队列数
       barTimer = setTimeout(() => showBar.value = false, 1000);
     }
   });
+
   socketTask.onError(e => console.error('进度通道错误', e));
-}
-function closeProgressSocket() {
-  socketTask?.close();
-  clearTimeout(barTimer);
 }
 
 /* ---------- 队列轮询 ---------- */
@@ -347,8 +369,8 @@ function pullQueueCount() {
 /* 顶部标题 + 队列徽章 */
 .header{ display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
 .title{ font-size: 18px; font-weight: bold; color: #333; }
-.queue-badge{ background: #ff9800; color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 10px; }
-
+/* 原样式保持不变，颜色由行内 style 动态控制 */
+.queue-badge{ color: #fff; font-size: 12px; padding: 2px 8px; border-radius: 10px; }
 /* 菜单区 */
 .menu{ padding: 0; }
 .menu-item{ padding: 12px 0; border-bottom: 1px solid #f0f0f0; display: flex; justify-content: space-between; align-items: center; }
