@@ -170,6 +170,7 @@ function submitForm() {
   });
 }
 
+
 /* 重置密码（独立功能） */
 function resetPwd(id) {
   uni.showModal({
@@ -182,8 +183,15 @@ function resetPwd(id) {
           url: `${BASE_URL}/api/root/users/${id}/password`,
           method: 'PATCH',
           header: { token },
-          data: { newPwd: res.content },
-          success: () => uni.showToast({ title: '密码已重置' })
+          data: { newPwd: res.content }, // 发送 JSON 数据
+          success: (apiRes) => {
+            // 【关键修改】必须检查状态码
+            if (apiRes.statusCode !== 200) {
+              return uni.showToast({ title: '重置失败，请查看后端日志', icon: 'none' });
+            }
+            uni.showToast({ title: '密码已重置' });
+          },
+          fail: () => uni.showToast({ title: '请求失败', icon: 'none' })
         });
       }
     }

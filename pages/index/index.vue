@@ -282,8 +282,15 @@ function changeMyPwd() {
           url: `${BASE_URL}/api/auth/me/password`,
           method: 'PUT',
           header: { token: token.value },
-          data: { newPwd: res.content },
-          success: () => uni.showToast({ title: '密码已修改' })
+          data: { newPwd: res.content }, // 这里发送的 JSON 结构与后端新的 ChangePwdForm 对应
+          success: (apiRes) => {
+            // 【关键修改】必须检查状态码！
+            if (apiRes.statusCode !== 200) {
+              return uni.showToast({ title: '修改失败', icon: 'none' });
+            }
+            uni.showToast({ title: '密码已修改' });
+          },
+          fail: () => uni.showToast({ title: '网络请求失败', icon: 'none' })
         });
       }
     }
