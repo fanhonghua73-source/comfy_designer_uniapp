@@ -40,21 +40,42 @@
 
     <!-- 动态表单 -->
     <view class="section" v-if="currentSchema">
-      <view v-for="(item,index) in currentSchema.inputs" :key="index" class="form-item">
-        <text class="item-label">{{ item.label }}</text>
-        <view v-if="item.type==='image'" class="upload-area" @click="chooseImage(item.key)">
-          <image v-if="formData[item.key]" :src="formData[item.key]" mode="aspectFill"/>
-          <text v-else>+</text>
+          <view v-for="(item,index) in currentSchema.inputs" :key="index" class="form-item">
+            <text class="item-label">{{ item.label }}</text>
+            
+            <view v-if="item.type==='image' || item.type==='video'" class="upload-area" @click="chooseFile(item)">
+              <block v-if="formData[item.key]">
+                 <video v-if="item.type==='video'" :src="formData[item.key]" class="mini-media" :controls="false"></video>
+                 <image v-else :src="formData[item.key]" mode="aspectFill" class="mini-media"/>
+              </block>
+              <text v-else>+</text>
+            </view>
+    
+            <input v-else v-model="formData[item.key]" class="input-box" placeholder="请输入内容"/>
+          </view>
         </view>
-        <input v-else v-model="formData[item.key]" class="input-box" placeholder="请输入内容"/>
-      </view>
-    </view>
 
     <!-- 结果 -->
-    <view class="section result-section" v-if="resultImageUrl">
-      <text class="label">生成结果 (点击预览)</text>
-      <image :src="resultImageUrl" mode="aspectFit" class="result-image" @click="previewImage"/>
-    </view>
+    <view class="section result-section" v-if="resultFiles.length > 0">
+          <text class="label">生成结果 ({{ resultFiles.length }}个文件)</text>
+          
+          <view v-for="(file, idx) in resultFiles" :key="idx" class="result-item">
+              <video 
+                v-if="file.endsWith('.mp4') || file.endsWith('.mov')" 
+                :src="file" 
+                class="result-media"
+              ></video>
+              
+              <image 
+                v-else 
+                :src="file" 
+                mode="widthFix" 
+                class="result-media" 
+                @click="previewImage(file)"
+                @error="onImgError" 
+              />
+          </view>
+        </view>
 
     <!-- 功能按钮区 -->
     <view class="section menu">
@@ -102,7 +123,7 @@ const formData = reactive({});
 const imagePaths = reactive({});
 const isRunning = ref(false);
 const progress = ref(0);
-const resultImageUrl = ref('');
+const resultFiles = ref([]); // 【修改】改为数组
 
 /* 全局进度广播 */
 const showBar = ref(false);
@@ -183,49 +204,73 @@ function loadWorkflowList() {
 function onWorkflowChange(e) {
   wfIndex.value = e.detail.value;
   const wf = workflowList.value[wfIndex.value];
-  resultImageUrl.value = '';
-  uni.request({
-    url: `${BASE_URL}/api/workflows/${wf.id}/schema`,
-    header: { token: token.value },
-    success: res => {
-      currentSchema.value = res.data;
-      Object.keys(formData).forEach(k => delete formData[k]);
-      res.data.inputs.forEach(item => { formData[item.key] = ''; });
-    }
-  });
-}
+  resultFiles.value = []; 
+  
+    uni.request({
+      url: `${BASE_URL}/api/workflows/${wf.id}/schema`,
+      header: { token: token.value },
+      success: res => {
+        currentSchema.value = res.data;
+        // 重置表单数据
+        Object.keys(formData).forEach(k => delete formData[k]);
+        res.data.inputs.forEach(item => { formData[item.key] = ''; });
+        
+        // 【补充逻辑】如果有视频输入，也要初始化 imagePaths 防止 undefined
+        Object.keys(imagePaths).forEach(k => delete imagePaths[k]);
+      }
+    });
+  }
 
-/* ---------- 图片上传 ---------- */
-function chooseImage(key) {
-  uni.chooseImage({
-    count: 1,
-    success: res => {
-      formData[key] = res.tempFilePaths[0];
-      imagePaths[key] = res.tempFilePaths[0];
-    }
-  });
+/* ---------- 文件上传 (支持视频) ---------- */
+function chooseFile(item) {
+  const key = item.key;
+  if (item.type === 'video') {
+    // 视频选择逻辑
+    uni.chooseVideo({
+      sourceType: ['album', 'camera'],
+      success: res => {
+        formData[key] = res.tempFilePath;
+        imagePaths[key] = res.tempFilePath;
+      }
+    });
+  } else {
+    // 图片选择逻辑
+    uni.chooseImage({
+      count: 1,
+      success: res => {
+        formData[key] = res.tempFilePaths[0];
+        imagePaths[key] = res.tempFilePaths[0];
+      }
+    });
+  }
 }
 
 /* ---------- 生图 ---------- */
 function startGeneration() {
   if (wfIndex.value === -1) return uni.showToast({ title: '请选择模板', icon: 'none' });
-  const hasImage = currentSchema.value.inputs.some(i => i.type === 'image');
-  const imageKey = currentSchema.value.inputs.find(i => i.type === 'image')?.key;
-  if (hasImage && !imagePaths[imageKey]) return uni.showToast({ title: '请先上传图片', icon: 'none' });
+  
+  // 【修改】同时校验 image 或 video
+  const fileInput = currentSchema.value.inputs.find(i => i.type === 'image' || i.type === 'video');
+  if (fileInput && !imagePaths[fileInput.key]) {
+      return uni.showToast({ title: '请先上传文件', icon: 'none' });
+  }
 
   isRunning.value = true;
   progress.value = 0;
-  resultImageUrl.value = '';
+  resultFiles.value = []; // 【修改】清空数组
+  
+  // 如果有文件，获取 key，否则为空 (用于下面的 uni.uploadFile filePath)
+  const uploadKey = fileInput ? fileInput.key : '';
 
   const wfId = workflowList.value[wfIndex.value].id;
   const params = {};
   currentSchema.value.inputs.forEach(item => {
-    if (item.type !== 'image') params[item.key] = formData[item.key];
+    if (item.type !== 'image' && item.type !== 'video') params[item.key] = formData[item.key];
   });
 
   uni.uploadFile({
     url: `${BASE_URL}/api/tasks/run/${wfId}`,
-    filePath: imagePaths[imageKey] || '',
+    filePath: imagePaths[uploadKey] || '',
     name: 'files',
     header: { token: token.value },
     formData: { user: userName.value, params: JSON.stringify(params) },
@@ -253,7 +298,8 @@ function pollStatus(promptId) {
           if (res.data.status === 'success') {
             clearInterval(timer);
             isRunning.value = false;
-            resultImageUrl.value = `${BASE_URL}/${res.data.result_url}`;
+            const list = res.data.results || [];
+			resultFiles.value = list.map(path => `${BASE_URL}/${path}`);
             uni.showToast({ title: '生成完成', icon: 'success' });
           } else if (res.data.status === 'failed') {
             clearInterval(timer);
@@ -266,8 +312,8 @@ function pollStatus(promptId) {
   }, 2000);
 }
 
-function previewImage() {
-  uni.previewImage({ urls: [resultImageUrl.value] });
+function previewImage(url) {
+  uni.previewImage({ urls: [url] });
 }
 
 /* ---------- 用户功能 ---------- */
@@ -352,6 +398,10 @@ function pullQueueCount() {
     fail: () => waitingCount.value = 0
   });
 }
+function onImgError(e) {
+  console.error("图片加载失败，路径为:", e.target.dataset.src || e);
+  uni.showToast({ title: '图片加载失败', icon: 'none' });
+}
 </script>
 
 <style lang="scss">
@@ -391,11 +441,45 @@ function pullQueueCount() {
 .form-item{ margin-bottom: 15px;}
 .item-label{ font-size: 13px; color: #444; margin-bottom: 5px; display: block;}
 .input-box{ border: 1px solid #ddd; padding: 10px; border-radius: 5px; width: 100%; box-sizing: border-box; height: 40px; font-size: 14px;}
-.upload-area{ width: 80px; height: 80px; border: 2px dashed #ddd; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 24px; color: #999;
-  image{ width: 100%; height: 100%; border-radius: 8px;}
+.upload-area {
+    width: 80px; 
+    height: 80px; 
+    border: 2px dashed #ddd; 
+    border-radius: 8px; 
+    display: flex; 
+    align-items: center; 
+    justify-content: center; /* 建议加上居中，这样 "+" 号也会居中 */
+    overflow: hidden; /* 建议加上，防止内容溢出圆角 */
+
+    /* 【关键修改】同时选中 image 和 video，或者直接用 .mini-media 类名 */
+    image, video, .mini-media {
+        width: 100%; 
+        height: 100%; 
+        border-radius: 8px;
+    }
 }
 .result-section{ display: flex; flex-direction: column; align-items: center;
   .result-image{ width: 100%; height: 260px; border-radius: 8px; margin-top: 5px; background-color: #eee;}
+  .result-media { 
+      width: 100%; 
+      min-height: 200px;        /* 强制最小高度，防止坍塌 */
+	  max-height: 800rpx; /* 约等于屏幕高度的一半 */
+      height: auto;             /* 让 widthFix 生效 */
+      border-radius: 8px; 
+	  /* 保持比例，内容完整显示在框内 */
+	  object-fit: contain;
+      margin-top: 5px; 
+      background-color: #eee;   /* 灰色背景 */
+      border: 1px solid #ccc;   /* 加个边框方便看 */
+      display: block; 
+  }
+  .result-item { 
+          width: 600rpx;  /* <--- 关键 */
+          margin-bottom: 20px; 
+          display: flex;        /* 建议加上 */
+          flex-direction: column; /* 建议加上 */
+          align-items: center;  /* 让内部图片居中 */
+      }
 }
 .footer{ margin-top: 20px; padding-bottom: 40px;}
 .submit-btn{ background-color: #007aff; color: white; border-radius: 25px; height: 44px; line-height: 44px; font-size: 16px;}
