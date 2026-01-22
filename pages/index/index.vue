@@ -249,41 +249,63 @@ function chooseFile(item) {
 function startGeneration() {
   if (wfIndex.value === -1) return uni.showToast({ title: '请选择模板', icon: 'none' });
   
-  // 【修改】同时校验 image 或 video
-  const fileInput = currentSchema.value.inputs.find(i => i.type === 'image' || i.type === 'video');
-  if (fileInput && !imagePaths[fileInput.key]) {
-      return uni.showToast({ title: '请先上传文件', icon: 'none' });
+  // 1. 收集所有需要上传的文件
+  const fileList = [];
+  // 按照 Schema 的顺序遍历，确保传给后端的文件顺序与输入框顺序一致
+  currentSchema.value.inputs.forEach(item => {
+    if ((item.type === 'image' || item.type === 'video') && imagePaths[item.key]) {
+      fileList.push({
+        name: 'files',  // 对应后端 FastAPI 的 files 参数名
+        uri: imagePaths[item.key] // 文件路径
+      });
+    }
+  });
+
+  // 校验：如果模板里有图片输入，但用户一张都没传，拦截
+  const hasImageInput = currentSchema.value.inputs.some(i => i.type === 'image' || i.type === 'video');
+  if (hasImageInput && fileList.length === 0) {
+      return uni.showToast({ title: '请至少上传一张图片', icon: 'none' });
   }
 
   isRunning.value = true;
   progress.value = 0;
-  resultFiles.value = []; // 【修改】清空数组
-  
-  // 如果有文件，获取 key，否则为空 (用于下面的 uni.uploadFile filePath)
-  const uploadKey = fileInput ? fileInput.key : '';
+  resultFiles.value = []; 
 
   const wfId = workflowList.value[wfIndex.value].id;
   const params = {};
   currentSchema.value.inputs.forEach(item => {
-    if (item.type !== 'image' && item.type !== 'video') params[item.key] = formData[item.key];
+    // 收集非图片类的普通参数（如 Prompt 文字）
+    if (item.type !== 'image' && item.type !== 'video') {
+        params[item.key] = formData[item.key];
+    }
   });
 
+  // 2. 使用 files 参数进行多文件上传
   uni.uploadFile({
     url: `${BASE_URL}/api/tasks/run/${wfId}`,
-    filePath: imagePaths[uploadKey] || '',
-    name: 'files',
+    // 【核心修改】这里不再用 filePath，而是用 files 数组
+    files: fileList, 
     header: { token: token.value },
-    formData: { user: userName.value, params: JSON.stringify(params) },
+    formData: { 
+        user: userName.value, 
+        params: JSON.stringify(params) 
+    },
     success: uploadRes => {
       try {
+        // uni.uploadFile 返回的 data 是字符串，需要再次 parse
         const data = JSON.parse(uploadRes.data);
         pollStatus(data.comfy_id);
       } catch (e) {
+        console.error(e);
         isRunning.value = false;
-        uni.showToast({ title: '后端响应异常', icon: 'none' });
+        uni.showToast({ title: '后端响应解析失败', icon: 'none' });
       }
     },
-    fail: () => { isRunning.value = false; uni.showToast({ title: '提交失败', icon: 'none' }); }
+    fail: (err) => { 
+        console.error(err);
+        isRunning.value = false; 
+        uni.showToast({ title: '提交失败，请检查网络', icon: 'none' }); 
+    }
   });
 }
 
